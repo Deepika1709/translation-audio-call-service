@@ -370,7 +370,23 @@ const callAutomationClient = new CallAutomationClient(ACS_CONNECTION_STRING);
 const CHUNK_INTERVAL_MS = 600;
 const SPEECH_END_SILENCE_MS = "500";
 
+// const LOCALE_TO_TRANSLATION_CODE = {
+//   "en-US": "en",
+//   "hi-IN": "hi",
+//   "fr-FR": "fr",
+//   "es-ES": "es",
+//   "de-DE": "de",
+//   "zh-CN": "zh-Hans",
+//   "ja-JP": "ja",
+//   "ar-SA": "ar",
+//   "pt-BR": "pt",
+//   "it-IT": "it",
+//   "ko-KR": "ko",
+//   "ru-RU": "ru",
+// };
+
 const LOCALE_TO_TRANSLATION_CODE = {
+  // Original 12 languages
   "en-US": "en",
   "hi-IN": "hi",
   "fr-FR": "fr",
@@ -379,30 +395,149 @@ const LOCALE_TO_TRANSLATION_CODE = {
   "zh-CN": "zh-Hans",
   "ja-JP": "ja",
   "ar-SA": "ar",
+  "pt-PT": "pt",
   "pt-BR": "pt",
   "it-IT": "it",
   "ko-KR": "ko",
   "ru-RU": "ru",
+  
+  // NEW: 43 additional languages
+  // European (13)
+  "cs-CZ": "cs",     // Czech
+  "da-DK": "da",     // Danish
+  "nl-NL": "nl",     // Dutch
+  "fi-FI": "fi",     // Finnish
+  "el-GR": "el",     // Greek
+  "hu-HU": "hu",     // Hungarian
+  "no-NO": "nb",     // Norwegian
+  "pl-PL": "pl",     // Polish
+  "ro-RO": "ro",     // Romanian
+  "sk-SK": "sk",     // Slovak
+  "sv-SE": "sv",     // Swedish
+  "tr-TR": "tr",     // Turkish
+  "uk-UA": "uk",     // Ukrainian
+  
+  // Indian (10)
+  "as-IN": "as",     // Assamese
+  "bn-IN": "bn",     // Bengali
+  "gu-IN": "gu",     // Gujarati
+  "kn-IN": "kn",     // Kannada
+  "ml-IN": "ml",     // Malayalam
+  "mr-IN": "mr",     // Marathi
+  "or-IN": "or",     // Odia
+  "pa-IN": "pa",     // Punjabi
+  "ta-IN": "ta",     // Tamil
+  "te-IN": "te",     // Telugu
+  
+  // Asian (4)
+  "th-TH": "th",     // Thai
+  "vi-VN": "vi",     // Vietnamese
+  "id-ID": "id",     // Indonesian
+  "ms-MY": "ms",     // Malay
+  
+  // Middle Eastern & Central Asian (6)
+  "az-AZ": "az",     // Azerbaijani
+  "fa-IR": "fa",     // Persian
+  "he-IL": "he",     // Hebrew
+  "ur-PK": "ur",     // Urdu
+  "kk-KZ": "kk",     // Kazakh
+  "uz-UZ": "uz",     // Uzbek
+  
+  // African (2)
+  "sw-KE": "sw",     // Swahili
+  "am-ET": "am",     // Amharic
+  
+  // Other (3)
+  "ca-ES": "ca",     // Catalan
+  "gl-ES": "gl",     // Galician
+  "eu-ES": "eu",     // Basque
 };
 
+
+// const LANGUAGE_TO_VOICE = {
+//   "en-US": "en-US-GuyNeural",
+//   "hi-IN": "hi-IN-AaravNeural",
+//   "fr-FR": "fr-FR-DeniseNeural",
+//   "es-ES": "es-ES-AlvaroNeural",
+//   "de-DE": "de-DE-ConradNeural",
+//   "zh-CN": "zh-CN-XiaoxiaoNeural",
+//   "ja-JP": "ja-JP-NanamiNeural",
+//   "ar-SA": "ar-SA-ZariyahNeural",
+//   "pt-BR": "pt-BR-AntonioNeural",
+//   "it-IT": "it-IT-DiegoNeural",
+//   "ko-KR": "ko-KR-InJoonNeural",
+//   "ru-RU": "ru-RU-DmitryNeural",
+// };
+
+// REMOVED: Language detection filter - not needed with separate group architecture
+
+// Initialize recognizer for a leg
+
 const LANGUAGE_TO_VOICE = {
+  // Original voices
   "en-US": "en-US-GuyNeural",
-  "hi-IN": "hi-IN-AaravNeural",
+  "hi-IN": "hi-IN-MadhurNeural",
   "fr-FR": "fr-FR-DeniseNeural",
   "es-ES": "es-ES-AlvaroNeural",
   "de-DE": "de-DE-ConradNeural",
   "zh-CN": "zh-CN-XiaoxiaoNeural",
   "ja-JP": "ja-JP-NanamiNeural",
   "ar-SA": "ar-SA-ZariyahNeural",
+  "pt-PT": "pt-PT-RaquelNeural",
   "pt-BR": "pt-BR-AntonioNeural",
   "it-IT": "it-IT-DiegoNeural",
   "ko-KR": "ko-KR-InJoonNeural",
   "ru-RU": "ru-RU-DmitryNeural",
+  
+  // NEW: 43 additional Azure TTS voices
+  // European
+  "cs-CZ": "cs-CZ-AntoninNeural",
+  "da-DK": "da-DK-ChristelNeural",
+  "nl-NL": "nl-NL-ColetteNeural",
+  "fi-FI": "fi-FI-SelmaNeural",
+  "el-GR": "el-GR-NestorasNeural",
+  "hu-HU": "hu-HU-NoemiNeural",
+  "no-NO": "nb-NO-FinnNeural",
+  "pl-PL": "pl-PL-MarekNeural",
+  "ro-RO": "ro-RO-AlinaNeural",
+  "sk-SK": "sk-SK-LukasNeural",
+  "sv-SE": "sv-SE-MattiasNeural",
+  "tr-TR": "tr-TR-AhmetNeural",
+  "uk-UA": "uk-UA-OstapNeural",
+  
+  // Indian
+  "bn-IN": "bn-IN-BashkarNeural",
+  "gu-IN": "gu-IN-DhwaniNeural",
+  "kn-IN": "kn-IN-GaganNeural",
+  "ml-IN": "ml-IN-MidhunNeural",
+  "mr-IN": "mr-IN-ManoharNeural",
+  "pa-IN": "pa-IN-GianNeural",
+  "ta-IN": "ta-IN-ValluvarNeural",
+  "te-IN": "te-IN-MohanNeural",
+  
+  // Asian
+  "th-TH": "th-TH-NiwatNeural",
+  "vi-VN": "vi-VN-NamMinhNeural",
+  "id-ID": "id-ID-ArdiNeural",
+  "ms-MY": "ms-MY-OsmanNeural",
+  
+  // Middle Eastern
+  "az-AZ": "az-AZ-BabekNeural",
+  "fa-IR": "fa-IR-DilaraNeural",
+  "he-IL": "he-IL-AvriNeural",
+  "ur-PK": "ur-PK-AsadNeural",
+  "kk-KZ": "kk-KZ-DauletNeural",
+  "uz-UZ": "uz-UZ-MadinaNeural",
+  
+  // African
+  "sw-KE": "sw-KE-RafikiNeural",
+  "am-ET": "am-ET-AmehaNeural",
+  
+  // Other
+  "ca-ES": "ca-ES-EnricNeural",
+  "gl-ES": "gl-ES-RoiNeural",
+  "eu-ES": "en-US-GuyNeural", // Fallback
 };
-
-// REMOVED: Language detection filter - not needed with separate group architecture
-
-// Initialize recognizer for a leg
 function initializeRecognizer(bridge, legKey, pushStream) {
   const storedLeg = bridge.legs[legKey]; // persistent
   const runtimeLeg = bridge.runtime.legs[legKey]; // runtime
