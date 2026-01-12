@@ -506,11 +506,13 @@ const LANGUAGE_TO_VOICE = {
   "uk-UA": "uk-UA-OstapNeural",
   
   // Indian
+  "as-IN": "en-IN-NeerjaNeural",  // Assamese (fallback to English-India)
   "bn-IN": "bn-IN-BashkarNeural",
   "gu-IN": "gu-IN-DhwaniNeural",
   "kn-IN": "kn-IN-GaganNeural",
   "ml-IN": "ml-IN-MidhunNeural",
   "mr-IN": "mr-IN-ManoharNeural",
+  "or-IN": "en-IN-NeerjaNeural",  // Odia (fallback to English-India)
   "pa-IN": "pa-IN-GianNeural",
   "ta-IN": "ta-IN-ValluvarNeural",
   "te-IN": "te-IN-MohanNeural",
