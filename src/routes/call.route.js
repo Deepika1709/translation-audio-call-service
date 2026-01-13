@@ -18,6 +18,42 @@ import { saveBridge } from "../utils/RedisBridgeStore.js";
 
 const router = express.Router();
 
+// Helper function to get or create user from JWT data
+async function getOrCreateUser(userId, jwtData) {
+  try {
+    let user = await User.findOne({ userId: userId });
+    
+    if (!user) {
+      console.log(`📝 User ${userId} not found in database, creating from JWT data...`);
+      
+      // Extract data from JWT token
+      const phone = jwtData.phone || `+${userId.substring(0, 12)}`;
+      const firstName = jwtData.firstName || jwtData.first_name || 'User';
+      const lastName = jwtData.lastName || jwtData.last_name || userId.substring(0, 8);
+      const username = jwtData.username || `user_${userId.substring(0, 8)}`;
+      const email = jwtData.email || `${userId.substring(0, 8)}@uhura.app`;
+      
+      user = await User.create({
+        userId: userId,
+        phone: phone,
+        firstName: firstName,
+        lastName: lastName,
+        username: username,
+        email: email,
+        isVerified: jwtData.isVerified || true,
+        profileStatus: 'Active',
+      });
+      
+      console.log(`✅ User ${userId} created successfully`);
+    }
+    
+    return user;
+  } catch (err) {
+    console.error(`❌ Error getting/creating user ${userId}:`, err.message);
+    throw err;
+  }
+}
+
 router.post("/initiate", authenticateToken, async (req, res) => {
   const callerUserId = req.user.userId;
 
@@ -57,15 +93,9 @@ router.post("/initiate", authenticateToken, async (req, res) => {
       });
     }
 
-    const callerUser = await User.findOne({ userId: callerUserId });
-    if (!callerUser) {
-      return res.status(404).json({ error: "Caller not found" });
-    }
-
-    const calleeUser = await User.findOne({ userId: calleeUserId });
-    if (!calleeUser) {
-      return res.status(404).json({ error: "Callee not found" });
-    }
+    // Get or create users (auto-create from JWT if not exists)
+    const callerUser = await getOrCreateUser(callerUserId, req.user);
+    const calleeUser = await getOrCreateUser(calleeUserId, { userId: calleeUserId });
 
     const acsUser = await getOrCreateAcsUser(callerUserId);
 
@@ -193,10 +223,8 @@ router.post("/accept", authenticateToken, async (req, res) => {
       });
     }
 
-    const calleeUser = await User.findOne({ userId: calleeUserId });
-    if (!calleeUser) {
-      return res.status(404).json({ error: "Callee not found" });
-    }
+    // Get or create callee user (auto-create from JWT if not exists)
+    const calleeUser = await getOrCreateUser(calleeUserId, req.user);
 
     const bridge = await getOrCreateBridge(bridgeId);
     if (!bridge.legs.A.language) {
