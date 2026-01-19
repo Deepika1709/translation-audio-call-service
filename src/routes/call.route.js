@@ -511,4 +511,286 @@ router.get("/details/:callId", authenticateToken, async (req, res) => {
   }
 });
 
+// ============================================
+// VIDEO TRANSLATION CALL ENDPOINTS
+// ============================================
+
+router.post("/initiate-video", authenticateToken, async (req, res) => {
+  const callerUserId = req.user.userId;
+
+  console.log("📹 VIDEO CALL INITIATED !!!!!!", callerUserId);
+  
+  try {
+    const { calleeUserId, callerLanguage } = req.body;
+
+    // 🔍 CRITICAL: Log all incoming data for debugging
+    console.log('═══════════════════════════════════════════════════');
+    console.log('📥 [/call/initiate-video] Incoming Request:');
+    console.log('  Caller User ID:', callerUserId);
+    console.log('  Callee User ID:', calleeUserId);
+    console.log('  Caller Language:', callerLanguage);
+    console.log('  Language Type:', typeof callerLanguage);
+    console.log('  Full Request Body:', JSON.stringify(req.body, null, 2));
+    console.log('═══════════════════════════════════════════════════');
+
+    if (!callerUserId || !calleeUserId) {
+      return res
+        .status(400)
+        .json({ error: "callerUserId and calleeUserId are required" });
+    }
+
+    if (!callerLanguage) {
+      console.error('❌ Missing callerLanguage in request body');
+      return res.status(400).json({ error: "callerLanguage is required" });
+    }
+
+    // Validate language code format (should be like 'en-US', 'hi-IN')
+    const languageRegex = /^[a-z]{2,3}-[A-Z]{2}$/;
+    if (!languageRegex.test(callerLanguage)) {
+      console.error(`❌ Invalid language code format: "${callerLanguage}"`);
+      return res.status(400).json({ 
+        error: `Invalid language code format: "${callerLanguage}". Expected format: xx-XX (e.g., en-US, hi-IN)` 
+      });
+    }
+
+    const callerUser = await User.findOne({ userId: callerUserId });
+    if (!callerUser) {
+      return res.status(404).json({ error: "Caller not found" });
+    }
+
+    const calleeUser = await User.findOne({ userId: calleeUserId });
+    if (!calleeUser) {
+      return res.status(404).json({ error: "Callee not found" });
+    }
+
+    const acsUser = await getOrCreateAcsUser(callerUserId);
+
+    const bridgeId = uuidv4();
+    const callId = uuidv4();
+    const groupIdA = uuidv4(); // ✅ Separate group for User A (caller)
+
+    // Load or create a bridge in Redis
+    const bridge = await getOrCreateBridge(
+      bridgeId,
+      callerUserId,
+      calleeUserId
+    );
+
+    // Store language, call ID, and ACS user ID
+    bridge.legs.A.language = callerLanguage;
+    bridge.legs.A.userId = callerUserId;
+    bridge.legs.A.acsUserId = acsUser.acsUserId;
+    bridge.legs.A.groupId = groupIdA; // ✅ Each leg has its own group
+    bridge.callId = callId;
+
+    // 🔥 Persist changes to Redis
+    await updateBridge(bridge);
+
+    const callRecord = await Call.create({
+      callId: callId,
+      bridgeId: bridgeId,
+      callType: "video", // 📹 VIDEO CALL TYPE
+      caller: {
+        userId: callerUserId,
+        language: callerLanguage,
+        acsUserId: acsUser.acsUserId,
+        groupId: groupIdA, // ✅ Separate group for caller
+      },
+      callee: {
+        userId: calleeUserId,
+      },
+      status: "initiated",
+      initiatedAt: new Date(),
+    });
+
+    // ⏳ DON'T connect bot yet - wait for callee to accept so we have both languages
+    // Bot will join in /accept-video endpoint after both languages are known
+
+    // Notify Callee via socket
+    const io = getIoInstance();
+    const roomSize = io.sockets.adapter.rooms.get(calleeUserId)?.size || 0;
+    
+    console.log(`📹 [INCOMING_VIDEO_CALL] Emitting to callee: ${calleeUserId}`);
+    console.log(`   Room size: ${roomSize} (0 means user not connected)`);
+    console.log(`   Event data:`, {
+      callId: callId,
+      bridgeId: bridgeId,
+      callerUserId: callerUserId,
+      callerName: `${callerUser.firstName} ${callerUser.lastName}`,
+      callerLanguage: callerLanguage,
+      callType: "video",
+    });
+    
+    io.to(calleeUserId).emit("incoming_call", {
+      callId: callId,
+      bridgeId: bridgeId,
+      callerUserId: callerUserId,
+      callerName: `${callerUser.firstName} ${callerUser.lastName}`,
+      callerLanguage: callerLanguage,
+      callType: "video", // 📹 Indicate this is a video call
+    });
+
+    console.log(
+      `📹 Video call initiated. CallID: ${callId}, Bridge: ${bridgeId}, Caller: ${callerUserId}, Language: ${callerLanguage}`
+    );
+
+    return res.json({
+      callId: callId,
+      acsUser,
+      bridgeId,
+      groupId: groupIdA, // ✅ Return caller's separate group
+      leg: "A",
+      callerLanguage: callerLanguage,
+      callType: "video",
+    });
+  } catch (err) {
+    console.error("❌ /call/initiate-video failed:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/accept-video", authenticateToken, async (req, res) => {
+  const calleeUserId = req.user.userId;
+
+  console.log("📹 VIDEO CALL ACCEPTED !!!!!!", calleeUserId);
+
+  try {
+    const { bridgeId, calleeLanguage } = req.body;
+
+    // 🔍 CRITICAL: Log all incoming data for debugging
+    console.log('═══════════════════════════════════════════════════');
+    console.log('📥 [/call/accept-video] Incoming Request:');
+    console.log('  Callee User ID:', calleeUserId);
+    console.log('  Bridge ID:', bridgeId);
+    console.log('  Callee Language:', calleeLanguage);
+    console.log('  Language Type:', typeof calleeLanguage);
+    console.log('  Full Request Body:', JSON.stringify(req.body, null, 2));
+    console.log('═══════════════════════════════════════════════════');
+
+    if (!calleeUserId || !bridgeId) {
+      return res
+        .status(400)
+        .json({ error: "calleeUserId and bridgeId are required" });
+    }
+
+    if (!calleeLanguage) {
+      console.error('❌ Missing calleeLanguage in request body');
+      return res.status(400).json({ error: "calleeLanguage is required" });
+    }
+
+    // Validate language code format
+    const languageRegex = /^[a-z]{2,3}-[A-Z]{2}$/;
+    if (!languageRegex.test(calleeLanguage)) {
+      console.error(`❌ Invalid language code format: "${calleeLanguage}"`);
+      return res.status(400).json({ 
+        error: `Invalid language code format: "${calleeLanguage}". Expected format: xx-XX (e.g., en-US, hi-IN)` 
+      });
+    }
+
+    const calleeUser = await User.findOne({ userId: calleeUserId });
+    if (!calleeUser) {
+      return res.status(404).json({ error: "Callee not found" });
+    }
+
+    const bridge = await getOrCreateBridge(bridgeId);
+    if (!bridge.legs.A.language) {
+      return res
+        .status(400)
+        .json({ error: "Caller language not set in bridge" });
+    }
+
+    const callRecord = await Call.findOne({ bridgeId: bridgeId });
+    if (!callRecord) {
+      return res.status(404).json({ error: "Call record not found" });
+    }
+
+    const acsUser = await getOrCreateAcsUser(calleeUserId);
+    const groupIdB = uuidv4(); // ✅ Separate group for User B (callee)
+
+    // Store callee's language and ACS user ID in bridge
+    bridge.legs.B.language = calleeLanguage;
+    bridge.legs.B.userId = calleeUserId;
+    bridge.legs.B.acsUserId = acsUser.acsUserId;
+    bridge.legs.B.groupId = groupIdB; // ✅ Each leg has its own group
+
+    await updateBridge(bridge);
+
+    // Update call record
+    callRecord.callee.language = calleeLanguage;
+    callRecord.callee.acsUserId = acsUser.acsUserId;
+    callRecord.callee.groupId = groupIdB; // ✅ Separate group for callee
+    callRecord.status = "accepted";
+    callRecord.acceptedAt = new Date();
+    await callRecord.save();
+
+    // ✅ Connect bot to BOTH separate groups for audio translation
+    const groupIdA = bridge.legs.A.groupId;
+    
+    console.log(`🤖 [ACCEPT-VIDEO] Connecting bot to TWO separate groups for audio translation:`);
+    console.log(`  - Group A (${bridge.legs.A.language}): ${groupIdA}`);
+    console.log(`  - Group B (${bridge.legs.B.language}): ${groupIdB}`);
+    
+    try {
+      // Connect to Leg A (caller's group) - will extract audio from video
+      await connectBotToBridgeLeg({
+        bridgeId: bridgeId,
+        groupId: groupIdA,
+        leg: "A", // Bot joins caller's private group
+      });
+      console.log(`✅ [ACCEPT-VIDEO] Bot connected to Leg A group ${groupIdA}`);
+      
+      // Connect to Leg B (callee's group) - will extract audio from video
+      await connectBotToBridgeLeg({
+        bridgeId: bridgeId,
+        groupId: groupIdB,
+        leg: "B", // Bot joins callee's private group
+      });
+      console.log(`✅ [ACCEPT-VIDEO] Bot connected to Leg B group ${groupIdB}`);
+    } catch (botError) {
+      console.error(`❌ [ACCEPT-VIDEO] Bot connection failed for bridge ${bridgeId}:`, botError);
+      throw botError;
+    }
+
+    // Initialize the speech recognizers (one per leg) for audio translation
+    setTimeout(() => {
+      reinitializePendingLeg(bridgeId, "A");
+      reinitializePendingLeg(bridgeId, "B");
+      console.log(
+        `🔄 Triggered initialization of recognizers for video bridge ${bridgeId}`
+      );
+    }, 1000);
+
+    // Emit socket event back to the CALLER
+    if (bridge.callerUserId) {
+      const io = getIoInstance();
+      io.to(bridge.callerUserId).emit("call_accepted", {
+        callId: callRecord.callId,
+        bridgeId: bridgeId,
+        calleeUserId: calleeUserId,
+        calleeName: `${calleeUser.firstName} ${calleeUser.lastName}`,
+        calleeLanguage: calleeLanguage,
+        callType: "video",
+      });
+    }
+
+    console.log(
+      `✅ Video call accepted. CallID: ${callRecord.callId}, Bridge: ${bridgeId}, Callee: ${calleeUserId}, Language: ${calleeLanguage}`
+    );
+
+    res.json({
+      callId: callRecord.callId,
+      acsUser,
+      bridgeId,
+      groupId: groupIdB, // ✅ Return Group B for callee to join
+      leg: "B",
+      callerLanguage: bridge.legs.A.language,
+      calleeLanguage: calleeLanguage,
+      callType: "video",
+    });
+  } catch (err) {
+    console.error("❌ /call/accept-video failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
