@@ -61,7 +61,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
   
 
   try {
-    const { calleeUserId, callerLanguage } = req.body;
+    const { calleeUserId, callerLanguage, callType = 'audio' } = req.body;
 
     // 🔍 CRITICAL: Log all incoming data for debugging
     console.log('═══════════════════════════════════════════════════');
@@ -69,6 +69,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     console.log('  Caller User ID:', callerUserId);
     console.log('  Callee User ID:', calleeUserId);
     console.log('  Caller Language:', callerLanguage);
+    console.log('  Call Type:', callType);
     console.log('  Language Type:', typeof callerLanguage);
     console.log('  Full Request Body:', JSON.stringify(req.body, null, 2));
     console.log('═══════════════════════════════════════════════════');
@@ -123,7 +124,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     const callRecord = await Call.create({
       callId: callId,
       bridgeId: bridgeId,
-      callType: "audio",
+      callType: callType, // ✅ Use callType from request (audio or video)
       caller: {
         userId: callerUserId,
         language: callerLanguage,
