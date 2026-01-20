@@ -14,7 +14,7 @@ const callSchema = new mongoose.Schema(
     },
     callType: {
       type: String,
-      enum: ["audio"],  
+      enum: ["audio", "video"],  
       default: "audio",
     },
     caller: {
