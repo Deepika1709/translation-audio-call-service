@@ -263,20 +263,34 @@ router.post("/accept", authenticateToken, async (req, res) => {
     callRecord.acceptedAt = new Date();
     await callRecord.save();
 
-    // ✅ Connect bot to the SINGLE shared group (once is enough)
-    console.log(`🤖 [ACCEPT] Connecting bot to SHARED group:`);
-    console.log(`  - Shared Group ID: ${sharedGroupId}`);
-    console.log(`  - Users: Caller (${bridge.legs.A.language}) + Callee (${bridge.legs.B.language})`);
+    // ✅ Connect bot to BOTH legs (separate connections for each user)
+    console.log(`🤖 [ACCEPT] Connecting bot to users separately:`);
+    console.log(`  - Bridge ID: ${bridgeId}`);
+    console.log(`  - Leg A: ${bridge.legs.A.language} (Caller)`);
+    console.log(`  - Leg B: ${bridge.legs.B.language} (Callee)`);
     
     try {
-      // Connect bot to the shared group (only need to do this once)
+      // Connect bot to Leg A (already done in /initiate, but ensure it exists)
+      if (!bridge.legs.A.callConnectionId) {
+        await connectBotToBridgeLeg({
+          bridgeId: bridgeId,
+          groupId: sharedGroupId,
+          leg: "A",
+          callType: callRecord.callType || 'audio',
+        });
+        console.log(`✅ [ACCEPT] Bot connected to Leg A`);
+      } else {
+        console.log(`ℹ️ [ACCEPT] Bot already connected to Leg A`);
+      }
+      
+      // Connect bot to Leg B (new connection for callee)
       await connectBotToBridgeLeg({
         bridgeId: bridgeId,
         groupId: sharedGroupId,
-        leg: "A", // We still track as "A" for the recognizer setup
+        leg: "B",
         callType: callRecord.callType || 'audio',
       });
-      console.log(`✅ [ACCEPT] Bot connected to shared group ${sharedGroupId}`);
+      console.log(`✅ [ACCEPT] Bot connected to Leg B`);
     } catch (botError) {
       console.error(`❌ [ACCEPT] Bot connection failed for bridge ${bridgeId}:`, botError);
       throw botError;
