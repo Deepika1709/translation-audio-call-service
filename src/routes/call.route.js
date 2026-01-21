@@ -18,42 +18,6 @@ import { saveBridge } from "../utils/RedisBridgeStore.js";
 
 const router = express.Router();
 
-// Helper function to get or create user from JWT data
-async function getOrCreateUser(userId, jwtData) {
-  try {
-    let user = await User.findOne({ userId: userId });
-    
-    if (!user) {
-      console.log(`📝 User ${userId} not found in database, creating from JWT data...`);
-      
-      // Extract data from JWT token
-      const phone = jwtData.phone || `+${userId.substring(0, 12)}`;
-      const firstName = jwtData.firstName || jwtData.first_name || 'User';
-      const lastName = jwtData.lastName || jwtData.last_name || userId.substring(0, 8);
-      const username = jwtData.username || `user_${userId.substring(0, 8)}`;
-      const email = jwtData.email || `${userId.substring(0, 8)}@uhura.app`;
-      
-      user = await User.create({
-        userId: userId,
-        phone: phone,
-        firstName: firstName,
-        lastName: lastName,
-        username: username,
-        email: email,
-        isVerified: jwtData.isVerified || true,
-        profileStatus: 'Active',
-      });
-      
-      console.log(`✅ User ${userId} created successfully`);
-    }
-    
-    return user;
-  } catch (err) {
-    console.error(`❌ Error getting/creating user ${userId}:`, err.message);
-    throw err;
-  }
-}
-
 router.post("/initiate", authenticateToken, async (req, res) => {
   const callerUserId = req.user.userId;
 
@@ -61,7 +25,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
   
 
   try {
-    const { calleeUserId, callerLanguage, callType = 'audio' } = req.body;
+    const { calleeUserId, callerLanguage } = req.body;
 
     // 🔍 CRITICAL: Log all incoming data for debugging
     console.log('═══════════════════════════════════════════════════');
@@ -69,7 +33,6 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     console.log('  Caller User ID:', callerUserId);
     console.log('  Callee User ID:', calleeUserId);
     console.log('  Caller Language:', callerLanguage);
-    console.log('  Call Type:', callType);
     console.log('  Language Type:', typeof callerLanguage);
     console.log('  Full Request Body:', JSON.stringify(req.body, null, 2));
     console.log('═══════════════════════════════════════════════════');
@@ -94,15 +57,21 @@ router.post("/initiate", authenticateToken, async (req, res) => {
       });
     }
 
-    // Get or create users (auto-create from JWT if not exists)
-    const callerUser = await getOrCreateUser(callerUserId, req.user);
-    const calleeUser = await getOrCreateUser(calleeUserId, { userId: calleeUserId });
+    const callerUser = await User.findOne({ userId: callerUserId });
+    if (!callerUser) {
+      return res.status(404).json({ error: "Caller not found" });
+    }
+
+    const calleeUser = await User.findOne({ userId: calleeUserId });
+    if (!calleeUser) {
+      return res.status(404).json({ error: "Callee not found" });
+    }
 
     const acsUser = await getOrCreateAcsUser(callerUserId);
 
     const bridgeId = uuidv4();
     const callId = uuidv4();
-    const sharedGroupId = uuidv4(); // ✅ SINGLE shared group for both users + bot
+    const groupIdA = uuidv4(); // ✅ Separate group for User A (caller)
 
     // Load or create a bridge in Redis
     const bridge = await getOrCreateBridge(
@@ -115,7 +84,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     bridge.legs.A.language = callerLanguage;
     bridge.legs.A.userId = callerUserId;
     bridge.legs.A.acsUserId = acsUser.acsUserId;
-    bridge.legs.A.groupId = sharedGroupId; // ✅ Both legs use SAME group
+    bridge.legs.A.groupId = groupIdA; // ✅ Each leg has its own group
     bridge.callId = callId;
 
     // 🔥 Persist changes to Redis
@@ -124,12 +93,12 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     const callRecord = await Call.create({
       callId: callId,
       bridgeId: bridgeId,
-      callType: callType, // ✅ Use callType from request (audio or video)
+      callType: "audio",
       caller: {
         userId: callerUserId,
         language: callerLanguage,
         acsUserId: acsUser.acsUserId,
-        groupId: sharedGroupId, // ✅ Both users in same group
+        groupId: groupIdA, // ✅ Separate group for caller
       },
       callee: {
         userId: calleeUserId,
@@ -171,7 +140,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
       callId: callId,
       acsUser,
       bridgeId,
-      groupId: sharedGroupId, // ✅ Return shared group for caller
+      groupId: groupIdA, // ✅ Return caller's separate group
       leg: "A",
       callerLanguage: callerLanguage,
     });
@@ -224,8 +193,10 @@ router.post("/accept", authenticateToken, async (req, res) => {
       });
     }
 
-    // Get or create callee user (auto-create from JWT if not exists)
-    const calleeUser = await getOrCreateUser(calleeUserId, req.user);
+    const calleeUser = await User.findOne({ userId: calleeUserId });
+    if (!calleeUser) {
+      return res.status(404).json({ error: "Callee not found" });
+    }
 
     const bridge = await getOrCreateBridge(bridgeId);
     if (!bridge.legs.A.language) {
@@ -240,57 +211,47 @@ router.post("/accept", authenticateToken, async (req, res) => {
     }
 
     const acsUser = await getOrCreateAcsUser(calleeUserId);
-    
-    // ✅ Get the SHARED group ID from bridge (created during initiate)
-    const sharedGroupId = bridge.legs.A.groupId;
-    if (!sharedGroupId) {
-      return res.status(500).json({ error: "Group ID not found in bridge" });
-    }
+    const groupIdB = uuidv4(); // ✅ Separate group for User B (callee)
 
     // Store callee's language and ACS user ID in bridge
     bridge.legs.B.language = calleeLanguage;
     bridge.legs.B.userId = calleeUserId;
     bridge.legs.B.acsUserId = acsUser.acsUserId;
-    bridge.legs.B.groupId = sharedGroupId; // ✅ Both legs use SAME group
+    bridge.legs.B.groupId = groupIdB; // ✅ Each leg has its own group
 
     await updateBridge(bridge);
 
     // Update call record
     callRecord.callee.language = calleeLanguage;
     callRecord.callee.acsUserId = acsUser.acsUserId;
-    callRecord.callee.groupId = sharedGroupId; // ✅ Both users in same group
+    callRecord.callee.groupId = groupIdB; // ✅ Separate group for callee
     callRecord.status = "accepted";
     callRecord.acceptedAt = new Date();
     await callRecord.save();
 
-    // ✅ Connect bot to BOTH legs (separate connections for each user)
-    console.log(`🤖 [ACCEPT] Connecting bot to users separately:`);
-    console.log(`  - Bridge ID: ${bridgeId}`);
-    console.log(`  - Leg A: ${bridge.legs.A.language} (Caller)`);
-    console.log(`  - Leg B: ${bridge.legs.B.language} (Callee)`);
+    // ✅ Connect bot to BOTH separate groups
+    const groupIdA = bridge.legs.A.groupId;
+    
+    console.log(`🤖 [ACCEPT] Connecting bot to TWO separate groups:`);
+    console.log(`  - Group A (${bridge.legs.A.language}): ${groupIdA}`);
+    console.log(`  - Group B (${bridge.legs.B.language}): ${groupIdB}`);
     
     try {
-      // Connect bot to Leg A (already done in /initiate, but ensure it exists)
-      if (!bridge.legs.A.callConnectionId) {
-        await connectBotToBridgeLeg({
-          bridgeId: bridgeId,
-          groupId: sharedGroupId,
-          leg: "A",
-          callType: callRecord.callType || 'audio',
-        });
-        console.log(`✅ [ACCEPT] Bot connected to Leg A`);
-      } else {
-        console.log(`ℹ️ [ACCEPT] Bot already connected to Leg A`);
-      }
-      
-      // Connect bot to Leg B (new connection for callee)
+      // Connect to Leg A (caller's group)
       await connectBotToBridgeLeg({
         bridgeId: bridgeId,
-        groupId: sharedGroupId,
-        leg: "B",
-        callType: callRecord.callType || 'audio',
+        groupId: groupIdA,
+        leg: "A", // Bot joins caller's private group
       });
-      console.log(`✅ [ACCEPT] Bot connected to Leg B`);
+      console.log(`✅ [ACCEPT] Bot connected to Leg A group ${groupIdA}`);
+      
+      // Connect to Leg B (callee's group)
+      await connectBotToBridgeLeg({
+        bridgeId: bridgeId,
+        groupId: groupIdB,
+        leg: "B", // Bot joins callee's private group
+      });
+      console.log(`✅ [ACCEPT] Bot connected to Leg B group ${groupIdB}`);
     } catch (botError) {
       console.error(`❌ [ACCEPT] Bot connection failed for bridge ${bridgeId}:`, botError);
       throw botError;
@@ -325,11 +286,10 @@ router.post("/accept", authenticateToken, async (req, res) => {
       callId: callRecord.callId,
       acsUser,
       bridgeId,
-      groupId: sharedGroupId, // ✅ Return shared group for callee to join
+      groupId: groupIdB, // ✅ Return Group B for callee to join
       leg: "B",
       callerLanguage: bridge.legs.A.language,
       calleeLanguage: calleeLanguage,
-      callType: callRecord.callType || 'audio', // ✅ Include call type from DB
     });
   } catch (err) {
     console.error("❌ /call/accept failed:", err);
@@ -472,12 +432,25 @@ router.post("/end", authenticateToken, async (req, res) => {
 
     if (otherUserId) {
       const io = getIoInstance();
-      io.to(otherUserId).emit("call_ended", {
+      const eventData = {
         callId: callRecord.callId,
         bridgeId: bridgeId,
         endedBy: userId,
         duration: callRecord.duration,
-      });
+      };
+      
+      console.log('════════════════════════════════════════════════════════');
+      console.log('📤 [/call/end] EMITTING call_ended EVENT');
+      console.log('   To User:', otherUserId);
+      console.log('   Event Data:', JSON.stringify(eventData, null, 2));
+      console.log('   Room size:', io.sockets.adapter.rooms.get(otherUserId)?.size || 0);
+      console.log('════════════════════════════════════════════════════════');
+      
+      io.to(otherUserId).emit("call_ended", eventData);
+      
+      console.log('✅ [/call/end] call_ended event emitted successfully');
+    } else {
+      console.log('⚠️ [/call/end] No otherUserId found to notify');
     }
 
     removeBridge(bridgeId);
