@@ -271,6 +271,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
         bridgeId: bridgeId,
         groupId: groupIdA,
         leg: "A", // Bot joins caller's private group
+        callType: callRecord.callType || 'audio', // ✅ Pass call type
       });
       console.log(`✅ [ACCEPT] Bot connected to Leg A group ${groupIdA}`);
       
@@ -279,6 +280,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
         bridgeId: bridgeId,
         groupId: groupIdB,
         leg: "B", // Bot joins callee's private group
+        callType: callRecord.callType || 'audio', // ✅ Pass call type
       });
       console.log(`✅ [ACCEPT] Bot connected to Leg B group ${groupIdB}`);
     } catch (botError) {
@@ -319,6 +321,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
       leg: "B",
       callerLanguage: bridge.legs.A.language,
       calleeLanguage: calleeLanguage,
+      callType: callRecord.callType || 'audio', // ✅ Include call type from DB
     });
   } catch (err) {
     console.error("❌ /call/accept failed:", err);

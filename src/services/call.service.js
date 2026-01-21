@@ -58,10 +58,10 @@ export async function getOrCreateAcsUser(userId) {
   }
 }
 
-export async function connectBotToBridgeLeg({ bridgeId, groupId, leg }) {
+export async function connectBotToBridgeLeg({ bridgeId, groupId, leg, callType = 'audio' }) {
   try {
     console.log(
-      `🔗 Connecting bot to bridge=${bridgeId} leg=${leg} group=${groupId}`
+      `🔗 Connecting bot to bridge=${bridgeId} leg=${leg} group=${groupId} callType=${callType}`
     );
 
     // ✅ Separate group architecture - each leg has unmixed audio
@@ -74,7 +74,7 @@ export async function connectBotToBridgeLeg({ bridgeId, groupId, leg }) {
     const mediaStreamingOptions = {
       transportUrl,
       transportType: "websocket",
-      contentType: "audio",
+      contentType: callType === 'video' ? 'audio' : 'audio', // ⚠️ Keep as audio for now - video transcription not supported
       audioChannelType: "unmixed", // ✅ Unmixed - only one user per group!
       audioFormat: "Pcm16KMono",
       enableBidirectional: true,
