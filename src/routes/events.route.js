@@ -44,6 +44,7 @@ import { CallAutomationClient } from "@azure/communication-call-automation";
 import redis from "../config/redis.js";
 
 import { getOrCreateBridge, updateBridge } from "../utils/bridgeHelper.js";
+import { reinitializePendingLeg } from "../services/speech.service.js";
 
 dotenv.config();
 
