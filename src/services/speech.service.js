@@ -679,7 +679,8 @@ export async function handleLegWebSocket(ws, req, NGROK_BASE) {
     bridgeId,
     legKey,
     recognizerData.myLanguage,
-    recognizerData.targetLanguage
+    recognizerData.targetLanguage,
+    runtimeLeg
   );
 
   recognizerData.recognizer.startContinuousRecognitionAsync();
@@ -713,7 +714,8 @@ function setupRecognizerHandlers(
   bridgeId,
   legKey,
   myLanguage,
-  targetLanguage
+  targetLanguage,
+  runtimeLeg  // ✅ FIX: Added runtimeLeg parameter for audio playback
 ) {
   let chunkBuffer = [];
   let lastChunkTime = Date.now();
@@ -914,7 +916,8 @@ export async function reinitializePendingLeg(bridgeId, legKey) {
     bridgeId,
     legKey,
     recognizerData.myLanguage,
-    recognizerData.targetLanguage
+    recognizerData.targetLanguage,
+    runtimeLeg
   );
 
   recognizerData.recognizer.startContinuousRecognitionAsync();
