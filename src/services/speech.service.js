@@ -616,6 +616,19 @@ export async function handleLegWebSocket(ws, req, NGROK_BASE) {
 
   const bridge = await getOrCreateBridge(bridgeId);
   
+  // ✅ SINGLE GROUP MODE: Both users + bot are in the same group
+  // Azure sends MIXED audio from both participants in one WebSocket stream
+  // We create TWO recognizers (A and B) listening to the same stream:
+  //   - Recognizer A: Configured for caller's language (e.g., hi-IN)
+  //   - Recognizer B: Configured for callee's language (e.g., en-US)
+  // Azure Speech SDK will only recognize speech in the configured language,
+  // effectively filtering the audio by speaker language.
+  //
+  // NOTE: This is a simplified approach. For better accuracy, we could:
+  //   - Use participant ID from audio metadata to route audio correctly
+  //   - Implement speaker diarization to separate speakers
+  //   - Use Azure's conversation transcription API
+  
   // Store WebSocket for this specific leg
   const runtimeLeg = bridge.runtime.legs[legKey];
   runtimeLeg.ws = ws;
@@ -782,17 +795,18 @@ function setupRecognizerHandlers(
         return;
       }
       
-      if (!targetRuntimeLeg.ws) {
-        console.log(`⚠️ Target WebSocket for ${targetLegKey} does not exist.`);
-        console.log(`⚠️ This is an Azure Call Automation limitation - bidirectional streaming only works for the first group call.`);
-        console.log(`⚠️ Subtitles will work, but audio playback requires alternative architecture.`);
-        
+      // ✅ FIXED: With single-group architecture, we now use the SAME WebSocket for bidirectional audio
+      // Both legs (A and B) share the same bot connection, so we send audio back through the same WS
+      const targetWs = targetRuntimeLeg.ws || runtimeLeg.ws;
+      
+      if (!targetWs) {
+        console.log(`⚠️ No WebSocket available for audio playback to ${targetLegKey}`);
         isSpeaking = false;
         return;
       }
       
-      if (targetRuntimeLeg.ws.readyState !== 1) {
-        console.log(`⚠️ Target WebSocket for ${targetLegKey} not ready (state: ${targetRuntimeLeg.ws.readyState})`);
+      if (targetWs.readyState !== 1) {
+        console.log(`⚠️ WebSocket not ready for ${targetLegKey} (state: ${targetWs.readyState})`);
         console.log(`   WebSocket states: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED`);
         isSpeaking = false;
         return;
@@ -816,15 +830,16 @@ function setupRecognizerHandlers(
             // Skip WAV header (first 44 bytes) to get raw PCM data
             const pcmData = audioBuffer.slice(44);
             
-            // Send audio back through the bot's bidirectional WebSocket in chunks
-            if (targetRuntimeLeg.ws && targetRuntimeLeg.ws.readyState === 1) {
+            // ✅ Send audio back through the bidirectional WebSocket
+            // With single-group mode, we use the same WebSocket for both directions
+            if (targetWs && targetWs.readyState === 1) {
               // ACS expects PCM audio in chunks, send in 3200-byte chunks (100ms of audio)
               const chunkSize = 3200; // 100ms at 16kHz, 16-bit mono
               
               for (let i = 0; i < pcmData.length; i += chunkSize) {
                 const chunk = pcmData.slice(i, i + chunkSize);
                 
-                targetRuntimeLeg.ws.send(
+                targetWs.send(
                   JSON.stringify({
                     kind: "AudioData",
                     audioData: { data: chunk.toString("base64") },

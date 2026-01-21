@@ -64,7 +64,9 @@ export async function connectBotToBridgeLeg({ bridgeId, groupId, leg, callType =
       `🔗 Connecting bot to bridge=${bridgeId} leg=${leg} group=${groupId} callType=${callType}`
     );
 
-    // ✅ Separate group architecture - each leg has unmixed audio
+    // ✅ SINGLE GROUP ARCHITECTURE - both users + bot in same group
+    // This is required because Azure Call Automation only supports bidirectional
+    // WebSocket streaming for ONE group connection.
     const legKey = leg === "B" ? "B" : "A";
     const groupCallLocator = { kind: "groupCallLocator", id: groupId };
     const transportUrl = `${AUDIO_STREAM_URL}?bridgeId=${bridgeId}&leg=${legKey}`;
@@ -75,7 +77,7 @@ export async function connectBotToBridgeLeg({ bridgeId, groupId, leg, callType =
       transportUrl,
       transportType: "websocket",
       contentType: callType === 'video' ? 'audio' : 'audio', // ⚠️ Keep as audio for now - video transcription not supported
-      audioChannelType: "unmixed", // ✅ Unmixed - only one user per group!
+      audioChannelType: "mixed", // ✅ MIXED - both users in same group (will need to separate by participant ID)
       audioFormat: "Pcm16KMono",
       enableBidirectional: true,
       startMediaStreaming: true,

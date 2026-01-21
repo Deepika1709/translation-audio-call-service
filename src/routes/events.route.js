@@ -62,40 +62,26 @@ router.post("/", async (req, res) => {
       console.log(`📡 Event: ${type}`);
 
       // =========================================================
-      //  CALL CONNECTED EVENT - Force start for Leg B if needed
+      //  CALL CONNECTED EVENT
       // =========================================================
       if (type === "Microsoft.Communication.CallConnected") {
         console.log("✅ Call connected:", data.callConnectionId);
+        console.log("   Media streaming will start automatically (startMediaStreaming: true)");
         
+        // Trigger recognizer initialization for both legs
         const callId = data.callConnectionId;
-        
-        // Check if this is Leg B
-        let isLegB = false;
         const bridgeIds = await redis.keys("BRIDGE:*");
         for (const key of bridgeIds) {
           const bridgeId = key.split(":")[1];
           const bridge = await getOrCreateBridge(bridgeId);
-          if (bridge?.legs?.B?.callConnectionId === callId) {
-            isLegB = true;
-            console.log(`🔍 Detected Leg B connection: ${callId}`);
+          if (bridge?.legs?.A?.callConnectionId === callId) {
+            console.log(`🔄 Triggered initialization of recognizers for bridge ${bridgeId}`);
+            setTimeout(() => {
+              reinitializePendingLeg(bridgeId, "A");
+              reinitializePendingLeg(bridgeId, "B");
+            }, 1000);
             break;
           }
-        }
-        
-        // 🔥 Force explicit media streaming start for Leg B
-        // Azure group calls have a bug where Leg B doesn't auto-start even with startMediaStreaming: true
-        if (isLegB) {
-          console.log(`🔄 [Leg B] Forcing explicit media streaming start...`);
-          try {
-            const callConnection = callAutomationClient.getCallConnection(callId);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s for connection to stabilize
-            await callConnection.getCallMedia().startMediaStreaming();
-            console.log(`✅ [Leg B] Explicitly started media streaming`);
-          } catch (err) {
-            console.log(`⚠️ [Leg B] Explicit start result: ${err.message}`);
-          }
-        } else {
-          console.log("   Media streaming will start automatically (startMediaStreaming: true)");
         }
       }
 

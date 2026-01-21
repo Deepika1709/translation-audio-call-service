@@ -102,7 +102,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
 
     const bridgeId = uuidv4();
     const callId = uuidv4();
-    const groupIdA = uuidv4(); // ✅ Separate group for User A (caller)
+    const sharedGroupId = uuidv4(); // ✅ SINGLE shared group for both users + bot
 
     // Load or create a bridge in Redis
     const bridge = await getOrCreateBridge(
@@ -115,7 +115,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     bridge.legs.A.language = callerLanguage;
     bridge.legs.A.userId = callerUserId;
     bridge.legs.A.acsUserId = acsUser.acsUserId;
-    bridge.legs.A.groupId = groupIdA; // ✅ Each leg has its own group
+    bridge.legs.A.groupId = sharedGroupId; // ✅ Both legs use SAME group
     bridge.callId = callId;
 
     // 🔥 Persist changes to Redis
@@ -129,7 +129,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
         userId: callerUserId,
         language: callerLanguage,
         acsUserId: acsUser.acsUserId,
-        groupId: groupIdA, // ✅ Separate group for caller
+        groupId: sharedGroupId, // ✅ Both users in same group
       },
       callee: {
         userId: calleeUserId,
@@ -171,7 +171,7 @@ router.post("/initiate", authenticateToken, async (req, res) => {
       callId: callId,
       acsUser,
       bridgeId,
-      groupId: groupIdA, // ✅ Return caller's separate group
+      groupId: sharedGroupId, // ✅ Return shared group for caller
       leg: "A",
       callerLanguage: callerLanguage,
     });
@@ -240,49 +240,43 @@ router.post("/accept", authenticateToken, async (req, res) => {
     }
 
     const acsUser = await getOrCreateAcsUser(calleeUserId);
-    const groupIdB = uuidv4(); // ✅ Separate group for User B (callee)
+    
+    // ✅ Get the SHARED group ID from bridge (created during initiate)
+    const sharedGroupId = bridge.legs.A.groupId;
+    if (!sharedGroupId) {
+      return res.status(500).json({ error: "Group ID not found in bridge" });
+    }
 
     // Store callee's language and ACS user ID in bridge
     bridge.legs.B.language = calleeLanguage;
     bridge.legs.B.userId = calleeUserId;
     bridge.legs.B.acsUserId = acsUser.acsUserId;
-    bridge.legs.B.groupId = groupIdB; // ✅ Each leg has its own group
+    bridge.legs.B.groupId = sharedGroupId; // ✅ Both legs use SAME group
 
     await updateBridge(bridge);
 
     // Update call record
     callRecord.callee.language = calleeLanguage;
     callRecord.callee.acsUserId = acsUser.acsUserId;
-    callRecord.callee.groupId = groupIdB; // ✅ Separate group for callee
+    callRecord.callee.groupId = sharedGroupId; // ✅ Both users in same group
     callRecord.status = "accepted";
     callRecord.acceptedAt = new Date();
     await callRecord.save();
 
-    // ✅ Connect bot to BOTH separate groups
-    const groupIdA = bridge.legs.A.groupId;
-    
-    console.log(`🤖 [ACCEPT] Connecting bot to TWO separate groups:`);
-    console.log(`  - Group A (${bridge.legs.A.language}): ${groupIdA}`);
-    console.log(`  - Group B (${bridge.legs.B.language}): ${groupIdB}`);
+    // ✅ Connect bot to the SINGLE shared group (once is enough)
+    console.log(`🤖 [ACCEPT] Connecting bot to SHARED group:`);
+    console.log(`  - Shared Group ID: ${sharedGroupId}`);
+    console.log(`  - Users: Caller (${bridge.legs.A.language}) + Callee (${bridge.legs.B.language})`);
     
     try {
-      // Connect to Leg A (caller's group)
+      // Connect bot to the shared group (only need to do this once)
       await connectBotToBridgeLeg({
         bridgeId: bridgeId,
-        groupId: groupIdA,
-        leg: "A", // Bot joins caller's private group
-        callType: callRecord.callType || 'audio', // ✅ Pass call type
+        groupId: sharedGroupId,
+        leg: "A", // We still track as "A" for the recognizer setup
+        callType: callRecord.callType || 'audio',
       });
-      console.log(`✅ [ACCEPT] Bot connected to Leg A group ${groupIdA}`);
-      
-      // Connect to Leg B (callee's group)
-      await connectBotToBridgeLeg({
-        bridgeId: bridgeId,
-        groupId: groupIdB,
-        leg: "B", // Bot joins callee's private group
-        callType: callRecord.callType || 'audio', // ✅ Pass call type
-      });
-      console.log(`✅ [ACCEPT] Bot connected to Leg B group ${groupIdB}`);
+      console.log(`✅ [ACCEPT] Bot connected to shared group ${sharedGroupId}`);
     } catch (botError) {
       console.error(`❌ [ACCEPT] Bot connection failed for bridge ${bridgeId}:`, botError);
       throw botError;
@@ -317,7 +311,7 @@ router.post("/accept", authenticateToken, async (req, res) => {
       callId: callRecord.callId,
       acsUser,
       bridgeId,
-      groupId: groupIdB, // ✅ Return Group B for callee to join
+      groupId: sharedGroupId, // ✅ Return shared group for callee to join
       leg: "B",
       callerLanguage: bridge.legs.A.language,
       calleeLanguage: calleeLanguage,
