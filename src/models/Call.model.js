@@ -5,7 +5,7 @@ const callSchema = new mongoose.Schema(
     callId: {
       type: String,
       required: true,
-      unique: true,
+      // unique: true,
     },
     bridgeId: {
       type: String,

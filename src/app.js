@@ -34,7 +34,7 @@ initializeSocketService
 app.use(cors({ origin: "*", methods: "*", allowedHeaders: "*" }));
 app.use(express.json());
 
-app.get("/health-check"   , (_req, res) => res.send("Translation Call service is healthy and happy!"));
+app.get("/health-check"   , (_req, res) => res.send("Translation Call service is healthy and happyyyyyyyhyyyyyyyyyyyyyyyyyyyyyyyyyyy!"));
 
 
 // routes
