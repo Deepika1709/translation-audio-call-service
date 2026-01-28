@@ -60,6 +60,8 @@ router.post("/", async (req, res) => {
 
     for (const e of events) {
       const { type, data } = e;
+      console.log("dataaaaaaaaaaaa🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯",data);
+      
       console.log(`📡 Event: ${type}`);
 
       // =========================================================
