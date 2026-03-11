@@ -584,28 +584,28 @@ router.post("/end", authenticateToken, async (req, res) => {
       // ---------------------------------------------------------
       // 📲 SEND PUSH NOTIFICATION TO OTHER USER (CALL ENDED)
       // ---------------------------------------------------------
-      try {
-        const endingUser = await User.findOne({ userId: userId });
-        await sendCallNotification(userId, otherUserId, {
-          title: 'Call Ended',
-          body: `${endingUser?.firstName || 'User'} ${endingUser?.lastName || ''} ended the translation call`,
-          data: {
-            callId: callRecord.callId,
-            bridgeId: bridgeId,
-            endedBy: userId,
-            duration: callRecord.duration,
-            notificationType: 'translation_call_ended',
-            isTranslationCall: true,
-          },
-        }, {
-          mode: 'kill',
-          callType: callRecord.callType || 'audio',
-          apnsTopic: 'com.uhura.app',
-        });
-        console.log(`✅ [PUSH] Call ended notification sent to other user`);
-      } catch (pushError) {
-        console.error('❌ [PUSH] Failed to send call ended notification:', pushError);
-      }
+      // try {
+      //   const endingUser = await User.findOne({ userId: userId });
+      //   await sendCallNotification(userId, otherUserId, {
+      //     title: 'Call Ended',
+      //     body: `${endingUser?.firstName || 'User'} ${endingUser?.lastName || ''} ended the translation call`,
+      //     data: {
+      //       callId: callRecord.callId,
+      //       bridgeId: bridgeId,
+      //       endedBy: userId,
+      //       duration: callRecord.duration,
+      //       notificationType: 'translation_call_ended',
+      //       isTranslationCall: true,
+      //     },
+      //   }, {
+      //     mode: 'kill',
+      //     callType: callRecord.callType || 'audio',
+      //     apnsTopic: 'com.uhura.app',
+      //   });
+      //   console.log(`✅ [PUSH] Call ended notification sent to other user`);
+      // } catch (pushError) {
+      //   console.error('❌ [PUSH] Failed to send call ended notification:', pushError);
+      // }
     } else {
       console.log('⚠️ [/call/end] No otherUserId found to notify');
     }
