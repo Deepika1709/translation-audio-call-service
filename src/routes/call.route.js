@@ -15,6 +15,7 @@ import { Call } from "../models/Call.model.js";
 import { reinitializePendingLeg } from "../services/speech.service.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { saveBridge } from "../utils/RedisBridgeStore.js";
+// import { sendCallNotification } from "../services/pushNotificationService.js";
 
 const router = express.Router();
 
@@ -72,7 +73,8 @@ router.post("/initiate", authenticateToken, async (req, res) => {
 
     const bridgeId = uuidv4();
     const callId = uuidv4();
-    const groupIdA = uuidv4(); // ✅ Separate group for User A (caller)
+    const groupIdA = uuidv4(); // ✅ Separate audio group for User A (caller) - for translation
+    const videoGroupId = callType === 'video' ? uuidv4() : null; // ✅ Shared video group for both users
 
     // Load or create a bridge in Redis
     const bridge = await getOrCreateBridge(
@@ -85,8 +87,9 @@ router.post("/initiate", authenticateToken, async (req, res) => {
     bridge.legs.A.language = callerLanguage;
     bridge.legs.A.userId = callerUserId;
     bridge.legs.A.acsUserId = acsUser.acsUserId;
-    bridge.legs.A.groupId = groupIdA; // ✅ Each leg has its own group
+    bridge.legs.A.groupId = groupIdA; // ✅ Audio-only group for translation
     bridge.callId = callId;
+    bridge.videoGroupId = videoGroupId; // ✅ Store shared video group ID
 
     // 🔥 Persist changes to Redis
     await updateBridge(bridge);
@@ -99,13 +102,16 @@ router.post("/initiate", authenticateToken, async (req, res) => {
         userId: callerUserId,
         language: callerLanguage,
         acsUserId: acsUser.acsUserId,
-        groupId: groupIdA, // ✅ Separate group for caller
+        groupId: groupIdA, // ✅ Audio group for caller (translation)
       },
       callee: {
         userId: calleeUserId,
       },
       status: "initiated",
       initiatedAt: new Date(),
+      metadata: {
+        videoGroupId: videoGroupId, // ✅ Store shared video group in metadata
+      },
     });
 
     // ⏳ DON'T connect bot yet - wait for callee to accept so we have both languages
@@ -132,19 +138,53 @@ router.post("/initiate", authenticateToken, async (req, res) => {
       callerName: `${callerUser.firstName} ${callerUser.lastName}`,
       callerLanguage: callerLanguage,
       callType: callType, // 🎥 Include call type for receiver
+      videoGroupId: videoGroupId, // ✅ Send shared video group to callee
     });
 
+    // ---------------------------------------------------------
+    // 📲 SEND PUSH NOTIFICATION (WORKS IN ALL STATES)
+    // ---------------------------------------------------------
+    // try {
+    //   await sendCallNotification(callerUserId, calleeUserId, {
+    //     title: `Incoming Translation ${callType === 'video' ? 'Video' : 'Audio'} Call`,
+    //     body: `${callerUser.firstName} ${callerUser.lastName} is calling you with translation`,
+    //     data: {
+    //       callId: callId,
+    //       bridgeId: bridgeId,
+    //       callerUserId: callerUserId,
+    //       callerName: `${callerUser.firstName} ${callerUser.lastName}`,
+    //       callerProfilePic: callerUser.profilePicUrl || '',
+    //       callerLanguage: callerLanguage,
+    //       callType: callType,
+    //       videoGroupId: videoGroupId || '',
+    //       groupId: groupIdA,
+    //       notificationType: 'incoming_translation_call',
+    //       isTranslationCall: true,
+    //     },
+    //   }, {
+    //     mode: 'kill', // This ensures notification works in all states
+    //     callType: callType,
+    //     apnsTopic: 'com.uhura.app',
+    //   });
+    //   console.log(`✅ [PUSH] Translation call notification sent successfully`);
+    // } catch (pushError) {
+    //   console.error('❌ [PUSH] Failed to send translation call notification:', pushError);
+    //   // Don't fail the call if push notification fails
+    // }
+
     console.log(
-      `📞 Call initiated. CallID: ${callId}, Bridge: ${bridgeId}, Caller: ${callerUserId}, Language: ${callerLanguage}`
+      `📞 Call initiated. CallID: ${callId}, Bridge: ${bridgeId}, Caller: ${callerUserId}, Language: ${callerLanguage}, CallType: ${callType}, VideoGroup: ${videoGroupId || 'N/A'}`
     );
 
     return res.json({
       callId: callId,
       acsUser,
       bridgeId,
-      groupId: groupIdA, // ✅ Return caller's separate group
+      groupId: groupIdA, // ✅ Return caller's audio group for translation
+      videoGroupId: videoGroupId, // ✅ Return shared video group ID
       leg: "A",
       callerLanguage: callerLanguage,
+      callType: callType,
     });
   } catch (err) {
     console.error("❌ /call/initiate failed:", err);
@@ -213,47 +253,56 @@ router.post("/accept", authenticateToken, async (req, res) => {
     }
 
     const acsUser = await getOrCreateAcsUser(calleeUserId);
-    const groupIdB = uuidv4(); // ✅ Separate group for User B (callee)
+    const groupIdB = uuidv4(); // ✅ Separate audio group for User B (callee) - for translation
 
     // Store callee's language and ACS user ID in bridge
     bridge.legs.B.language = calleeLanguage;
     bridge.legs.B.userId = calleeUserId;
     bridge.legs.B.acsUserId = acsUser.acsUserId;
-    bridge.legs.B.groupId = groupIdB; // ✅ Each leg has its own group
+    bridge.legs.B.groupId = groupIdB; // ✅ Audio-only group for translation
 
     await updateBridge(bridge);
 
     // Update call record
     callRecord.callee.language = calleeLanguage;
     callRecord.callee.acsUserId = acsUser.acsUserId;
-    callRecord.callee.groupId = groupIdB; // ✅ Separate group for callee
+    callRecord.callee.groupId = groupIdB; // ✅ Audio group for callee (translation)
     callRecord.status = "accepted";
     callRecord.acceptedAt = new Date();
     await callRecord.save();
 
-    // ✅ Connect bot to BOTH separate groups
+    // Get shared video group ID and call type
+    const videoGroupId = bridge.videoGroupId;
+    const callType = callRecord.callType;
+
+    // ✅ Connect bot to BOTH separate audio groups for translation
     const groupIdA = bridge.legs.A.groupId;
     
-    console.log(`🤖 [ACCEPT] Connecting bot to TWO separate groups:`);
-    console.log(`  - Group A (${bridge.legs.A.language}): ${groupIdA}`);
-    console.log(`  - Group B (${bridge.legs.B.language}): ${groupIdB}`);
+    console.log(`🤖 [ACCEPT] Connecting bot to TWO separate AUDIO groups for translation:`);
+    console.log(`  - Audio Group A (${bridge.legs.A.language}): ${groupIdA}`);
+    console.log(`  - Audio Group B (${bridge.legs.B.language}): ${groupIdB}`);
+    if (callType === 'video') {
+      console.log(`  - Shared Video Group (for peer-to-peer video): ${videoGroupId}`);
+    }
     
     try {
-      // Connect to Leg A (caller's group)
+      // Connect to Leg A (caller's audio group for translation)
       await connectBotToBridgeLeg({
         bridgeId: bridgeId,
         groupId: groupIdA,
-        leg: "A", // Bot joins caller's private group
+        leg: "A", // Bot joins caller's private audio group
+        callType: callType,
       });
-      console.log(`✅ [ACCEPT] Bot connected to Leg A group ${groupIdA}`);
+      console.log(`✅ [ACCEPT] Bot connected to Leg A audio group ${groupIdA}`);
       
-      // Connect to Leg B (callee's group)
+      // Connect to Leg B (callee's audio group for translation)
       await connectBotToBridgeLeg({
         bridgeId: bridgeId,
         groupId: groupIdB,
-        leg: "B", // Bot joins callee's private group
+        leg: "B", // Bot joins callee's private audio group
+        callType: callType,
       });
-      console.log(`✅ [ACCEPT] Bot connected to Leg B group ${groupIdB}`);
+      console.log(`✅ [ACCEPT] Bot connected to Leg B audio group ${groupIdB}`);
     } catch (botError) {
       console.error(`❌ [ACCEPT] Bot connection failed for bridge ${bridgeId}:`, botError);
       throw botError;
@@ -277,21 +326,51 @@ router.post("/accept", authenticateToken, async (req, res) => {
         calleeUserId: calleeUserId,
         calleeName: `${calleeUser.firstName} ${calleeUser.lastName}`,
         calleeLanguage: calleeLanguage,
+        videoGroupId: videoGroupId, // ✅ Send shared video group to caller
       });
+
+      // ---------------------------------------------------------
+      // 📲 SEND PUSH NOTIFICATION TO CALLER (CALL ACCEPTED)
+      // ---------------------------------------------------------
+      // try {
+      //   await sendCallNotification(calleeUserId, bridge.callerUserId, {
+      //     title: 'Call Accepted',
+      //     body: `${calleeUser.firstName} ${calleeUser.lastName} accepted your translation call`,
+      //     data: {
+      //       callId: callRecord.callId,
+      //       bridgeId: bridgeId,
+      //       calleeUserId: calleeUserId,
+      //       calleeName: `${calleeUser.firstName} ${calleeUser.lastName}`,
+      //       calleeLanguage: calleeLanguage,
+      //       videoGroupId: videoGroupId || '',
+      //       notificationType: 'translation_call_accepted',
+      //       isTranslationCall: true,
+      //     },
+      //   }, {
+      //     mode: 'kill',
+      //     callType: callType,
+      //     apnsTopic: 'com.uhura.app',
+      //   });
+      //   console.log(`✅ [PUSH] Call accepted notification sent to caller`);
+      // } catch (pushError) {
+      //   console.error('❌ [PUSH] Failed to send call accepted notification:', pushError);
+      // }
     }
 
     console.log(
-      `✅ Call accepted. CallID: ${callRecord.callId}, Bridge: ${bridgeId}, Callee: ${calleeUserId}, Language: ${calleeLanguage}`
+      `✅ Call accepted. CallID: ${callRecord.callId}, Bridge: ${bridgeId}, Callee: ${calleeUserId}, Language: ${calleeLanguage}, CallType: ${callType}, VideoGroup: ${videoGroupId || 'N/A'}`
     );
 
     res.json({
       callId: callRecord.callId,
       acsUser,
       bridgeId,
-      groupId: groupIdB, // ✅ Return Group B for callee to join
+      groupId: groupIdB, // ✅ Return callee's audio group for translation
+      videoGroupId: videoGroupId, // ✅ Return shared video group ID
       leg: "B",
       callerLanguage: bridge.legs.A.language,
       calleeLanguage: calleeLanguage,
+      callType: callType,
     });
   } catch (err) {
     console.error("❌ /call/accept failed:", err);
@@ -330,6 +409,31 @@ router.post("/reject", authenticateToken, async (req, res) => {
         bridgeId: bridgeId,
         rejectedBy: calleeUserId,
       });
+
+      // ---------------------------------------------------------
+      // 📲 SEND PUSH NOTIFICATION TO CALLER (CALL REJECTED)
+      // ---------------------------------------------------------
+      // try {
+      //   const calleeUser = await User.findOne({ userId: calleeUserId });
+      //   await sendCallNotification(calleeUserId, bridge.callerUserId, {
+      //     title: 'Call Rejected',
+      //     body: `${calleeUser?.firstName || 'User'} ${calleeUser?.lastName || ''} rejected your translation call`,
+      //     data: {
+      //       callId: callRecord.callId,
+      //       bridgeId: bridgeId,
+      //       rejectedBy: calleeUserId,
+      //       notificationType: 'translation_call_rejected',
+      //       isTranslationCall: true,
+      //     },
+      //   }, {
+      //     mode: 'kill',
+      //     callType: callRecord.callType || 'audio',
+      //     apnsTopic: 'com.uhura.app',
+      //   });
+      //   console.log(`✅ [PUSH] Call rejected notification sent to caller`);
+      // } catch (pushError) {
+      //   console.error('❌ [PUSH] Failed to send call rejected notification:', pushError);
+      // }
     }
 
     removeBridge(bridgeId);
@@ -378,6 +482,31 @@ router.post("/cancel", authenticateToken, async (req, res) => {
         bridgeId: bridgeId,
         cancelledBy: callerUserId,
       });
+
+      // ---------------------------------------------------------
+      // 📲 SEND PUSH NOTIFICATION TO CALLEE (CALL CANCELLED)
+      // ---------------------------------------------------------
+      // try {
+      //   const callerUser = await User.findOne({ userId: callerUserId });
+      //   await sendCallNotification(callerUserId, bridge.calleeUserId, {
+      //     title: 'Call Cancelled',
+      //     body: `${callerUser?.firstName || 'User'} ${callerUser?.lastName || ''} cancelled the translation call`,
+      //     data: {
+      //       callId: callRecord.callId,
+      //       bridgeId: bridgeId,
+      //       cancelledBy: callerUserId,
+      //       notificationType: 'translation_call_cancelled',
+      //       isTranslationCall: true,
+      //     },
+      //   }, {
+      //     mode: 'kill',
+      //     callType: callRecord.callType || 'audio',
+      //     apnsTopic: 'com.uhura.app',
+      //   });
+      //   console.log(`✅ [PUSH] Call cancelled notification sent to callee`);
+      // } catch (pushError) {
+      //   console.error('❌ [PUSH] Failed to send call cancelled notification:', pushError);
+      // }
     }
 
     removeBridge(bridgeId);
@@ -451,6 +580,32 @@ router.post("/end", authenticateToken, async (req, res) => {
       io.to(otherUserId).emit("call_ended", eventData);
       
       console.log('✅ [/call/end] call_ended event emitted successfully');
+
+      // ---------------------------------------------------------
+      // 📲 SEND PUSH NOTIFICATION TO OTHER USER (CALL ENDED)
+      // ---------------------------------------------------------
+      try {
+        const endingUser = await User.findOne({ userId: userId });
+        await sendCallNotification(userId, otherUserId, {
+          title: 'Call Ended',
+          body: `${endingUser?.firstName || 'User'} ${endingUser?.lastName || ''} ended the translation call`,
+          data: {
+            callId: callRecord.callId,
+            bridgeId: bridgeId,
+            endedBy: userId,
+            duration: callRecord.duration,
+            notificationType: 'translation_call_ended',
+            isTranslationCall: true,
+          },
+        }, {
+          mode: 'kill',
+          callType: callRecord.callType || 'audio',
+          apnsTopic: 'com.uhura.app',
+        });
+        console.log(`✅ [PUSH] Call ended notification sent to other user`);
+      } catch (pushError) {
+        console.error('❌ [PUSH] Failed to send call ended notification:', pushError);
+      }
     } else {
       console.log('⚠️ [/call/end] No otherUserId found to notify');
     }

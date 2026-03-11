@@ -18,20 +18,21 @@ export async function getOrCreateBridge(
       callerUserId,
       calleeUserId,
       callId: null,
+      videoGroupId: null, // ✅ Shared group ID for video peer-to-peer (translation video calls only)
       legs: {
         A: {
           language: null,
           userId: callerUserId,
           acsUserId: null,
           callConnectionId: null,
-          groupId: null, // ✅ Each leg has its own group ID
+          groupId: null, // ✅ Audio-only group ID for translation (separate for each leg)
         },
         B: {
           language: null,
           userId: calleeUserId,
           acsUserId: null,
           callConnectionId: null,
-          groupId: null, // ✅ Each leg has its own group ID
+          groupId: null, // ✅ Audio-only group ID for translation (separate for each leg)
         },
       },
     };

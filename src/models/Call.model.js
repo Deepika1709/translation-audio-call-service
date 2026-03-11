@@ -78,6 +78,7 @@ const callSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    
     endedBy: {
       type: String, 
       enum: ["caller", "callee", "system"],
@@ -99,6 +100,7 @@ const callSchema = new mongoose.Schema(
         type: Number,
         default: 0,
       },
+      videoGroupId: String, // ✅ Shared group ID for video peer-to-peer (translation video calls only)
     },
   },
   {
